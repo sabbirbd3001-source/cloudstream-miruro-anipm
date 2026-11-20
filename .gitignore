@@ -12,3 +12,4 @@ captures/
 *.output
 *.cs3
 *.jar
+.github/
