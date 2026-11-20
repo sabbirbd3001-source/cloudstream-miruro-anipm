@@ -97,6 +97,20 @@ class AniPmProviderTest {
     }
 
     @Test
+    fun testExtractorLinkHeaders() = kotlinx.coroutines.runBlocking {
+        val link = com.lagradost.cloudstream3.utils.newExtractorLink(
+            "test",
+            "test",
+            "https://example.com",
+            com.lagradost.cloudstream3.utils.ExtractorLinkType.M3U8
+        ) {
+            this.referer = "https://example.com"
+            this.headers = mapOf("Origin" to "https://example.com")
+        }
+        assertEquals("https://example.com", link.headers["Origin"])
+    }
+
+    @Test
     fun testSearchResponseParsing() {
         val json = """
             {

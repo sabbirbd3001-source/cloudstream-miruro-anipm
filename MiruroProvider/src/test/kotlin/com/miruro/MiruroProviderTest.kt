@@ -21,12 +21,43 @@ class MiruroProviderTest {
     @Test
     fun testProviderProperties() {
         assertEquals("Miruro", provider.name)
-        assertEquals("https://www.miruro.cx", provider.mainUrl)
+        assertEquals("https://miruro.cx", provider.mainUrl)
         assertTrue(provider.hasMainPage)
         assertEquals("en", provider.lang)
         assertTrue(provider.supportedTypes.contains(TvType.Anime))
         assertTrue(provider.supportedTypes.contains(TvType.AnimeMovie))
         assertTrue(provider.supportedTypes.contains(TvType.OVA))
+    }
+
+    @Test
+    fun testExtractAnimeId() {
+        assertEquals("7oSZWutNHE2AGglkr7YdMEgEAPg9ZKjy", provider.extractAnimeId("https://miruro.cx/info/7oSZWutNHE2AGglkr7YdMEgEAPg9ZKjy/attack-on-titan"))
+        assertEquals("7oSZWutNHE2AGglkr7YdMEgEAPg9ZKjy", provider.extractAnimeId("https://miruro.cx/watch/7oSZWutNHE2AGglkr7YdMEgEAPg9ZKjy?ep=1"))
+        assertEquals("test-123", provider.extractAnimeId("/info/test-123"))
+    }
+
+    @Test
+    fun testParseHtmlCards() {
+        val sampleHtml = """
+            <html>
+            <body>
+                <a href="/info/hDvb0oUMQRQgz9cJmhJULNQxNGU8ALkI/naruto" class="group">
+                    <img src="https://s4.anilist.co/poster.jpg" alt="Naruto"/>
+                </a>
+                <article data-cover-card="8rVxkkxRnGt12LItY2fnNEh1k1E7mmbA">
+                    <a href="/info/8rVxkkxRnGt12LItY2fnNEh1k1E7mmbA/the-apothecary-diaries" aria-label="The Apothecary Diaries">
+                        <img src="https://image.tmdb.org/backdrop.jpg"/>
+                    </a>
+                </article>
+            </body>
+            </html>
+        """.trimIndent()
+        val doc = Jsoup.parse(sampleHtml, "https://miruro.cx")
+        val cards = provider.parseHtmlCards(doc)
+        assertEquals(2, cards.size)
+        assertEquals("Naruto", cards[0].name)
+        assertEquals("https://miruro.cx/info/hDvb0oUMQRQgz9cJmhJULNQxNGU8ALkI/naruto", cards[0].url)
+        assertEquals("The Apothecary Diaries", cards[1].name)
     }
 
     @Test

@@ -89,7 +89,7 @@ class AniPmProvider : MainAPI() {
 
     private val webViewResolver by lazy {
         WebViewResolver(
-            interceptUrl = Regex("""https?://(?:www\.)?ani\.pm.*"""),
+            interceptUrl = Regex("""https?://(?:(?:www\.)?ani\.pm|.*settlar\.io).*"""),
             additionalUrls = listOf(
                 Regex(""".*challenges\.cloudflare\.com/.*"""),
                 Regex(""".*settlar\.io/.*"""),
@@ -387,14 +387,18 @@ class AniPmProvider : MainAPI() {
                 // Step 3: Fetch direct embed stream session from embed.settlar.io
                 val encToken = java.net.URLEncoder.encode(token, "UTF-8")
                 val streamApiUrl = "https://embed.settlar.io/api/embed/session?t=$encToken"
+                val settlarApiHeaders = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "https://embed.settlar.io/",
+                    "Origin" to "https://embed.settlar.io",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "same-origin",
+                    "Accept" to "application/json"
+                )
                 val streamResp = app.get(
                     streamApiUrl,
-                    headers = mapOf(
-                        "User-Agent" to USER_AGENT,
-                        "Referer" to "https://embed.settlar.io/",
-                        "Origin" to "https://embed.settlar.io",
-                        "Accept" to "application/json"
-                    ),
+                    headers = settlarApiHeaders,
                     interceptor = webViewResolver
                 )
 
@@ -405,12 +409,21 @@ class AniPmProvider : MainAPI() {
 
                 if (!hlsSource.isNullOrBlank()) {
                     val channelLabel = if (channel == "dub") "English Dub" else "Japanese Sub"
+                    val mediaHeaders = mapOf(
+                        "User-Agent" to USER_AGENT,
+                        "Referer" to "https://embed.settlar.io/",
+                        "Origin" to "https://embed.settlar.io",
+                        "Sec-Fetch-Dest" to "empty",
+                        "Sec-Fetch-Mode" to "cors",
+                        "Sec-Fetch-Site" to "same-site"
+                    )
 
                     try {
                         M3u8Helper.generateM3u8(
                             source = "$name - $channelLabel [HLS]",
                             streamUrl = hlsSource,
-                            referer = "https://embed.settlar.io/"
+                            referer = "https://embed.settlar.io/",
+                            headers = mediaHeaders
                         ).forEach {
                             callback.invoke(it)
                             foundAny = true
@@ -424,6 +437,7 @@ class AniPmProvider : MainAPI() {
                                 type = ExtractorLinkType.M3U8
                             ) {
                                 this.referer = "https://embed.settlar.io/"
+                                this.headers = mediaHeaders
                                 this.quality = Qualities.P1080.value
                             }
                         )

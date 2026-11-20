@@ -14,7 +14,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.StringUtils.encodeUri
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.Jsoup
@@ -25,7 +24,7 @@ import java.util.zip.GZIPInputStream
 
 class MiruroProvider : MainAPI() {
 
-    override var mainUrl = "https://www.miruro.cx"
+    override var mainUrl = "https://miruro.cx"
     override var name = "Miruro"
     override val hasMainPage = true
     override var lang = "en"
@@ -171,7 +170,6 @@ class MiruroProvider : MainAPI() {
         }
     }
 
-    // Cloudflare interceptor using Android WebView to bypass Cloudflare Turnstile if encountered
     private val webViewResolver by lazy {
         WebViewResolver(
             interceptUrl = Regex("""https?://(?:www\.)?miruro\.(?:cx|to|tv|bz).*"""),
@@ -179,7 +177,9 @@ class MiruroProvider : MainAPI() {
                 Regex(""".*challenges\.cloudflare\.com/.*"""),
                 Regex(""".*keeply\.top/.*"""),
                 Regex(""".*strm\.cx/.*"""),
-                Regex(""".*quavex\.top/.*""")
+                Regex(""".*quavex\.top/.*"""),
+                Regex(""".*ultracloud\.cc/.*"""),
+                Regex(""".*megaplay\.buzz/.*""")
             ),
             userAgent = USER_AGENT
         )
@@ -188,10 +188,10 @@ class MiruroProvider : MainAPI() {
     private val defaultHeaders = mapOf(
         "User-Agent" to USER_AGENT,
         "Referer" to "$mainUrl/",
-        "Accept" to "*/*",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.9",
-        "Sec-Fetch-Dest" to "empty",
-        "Sec-Fetch-Mode" to "cors",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
         "Sec-Fetch-Site" to "same-origin"
     )
 
@@ -203,51 +203,13 @@ class MiruroProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val items = mutableListOf<SearchResponse>()
-
-        // 1. Try Miruro direct API first
-        val apiPath = when {
-            request.data.contains("trending") -> "$mainUrl/api/v1/anime/trending?limit=20"
-            request.data.contains("popularity") -> "$mainUrl/api/v1/anime?sort=-popularity&limit=20"
-            request.data.contains("score") -> "$mainUrl/api/v1/anime?sort=-score&limit=20"
-            else -> "$mainUrl/api/v1/anime?limit=20"
-        }
-
-        try {
-            val resp = app.get(apiPath, headers = defaultHeaders, interceptor = webViewResolver)
-            if (resp.code == 200) {
-                val contentType = resp.headers["content-type"] ?: ""
-                val text = if (contentType.contains("octet-stream", ignoreCase = true)) {
-                    decryptCatalog(resp.body.bytes())
-                } else {
-                    resp.text
-                }
-
-                if (text.trim().startsWith("{") || text.trim().startsWith("[")) {
-                    val parsed = parseAnimeJsonList(text)
-                    if (parsed.isNotEmpty()) {
-                        return newHomePageResponse(
-                            listOf(HomePageList(request.name, parsed, isHorizontalImages = false)),
-                            hasNext = false
-                        )
-                    }
-                }
-            }
+        val doc = try {
+            app.get(request.data, headers = defaultHeaders, interceptor = webViewResolver).document
         } catch (_: Throwable) {
-            // Fallback to HTML parsing
+            return null
         }
 
-        // 2. Fallback to HTML LD-JSON or link parsing
-        try {
-            val doc = app.get(request.data, headers = defaultHeaders, interceptor = webViewResolver).document
-            val parsedHtml = parseLdJsonItems(doc)
-            if (parsedHtml.isNotEmpty()) {
-                items.addAll(parsedHtml)
-            } else {
-                items.addAll(parseHtmlCards(doc))
-            }
-        } catch (_: Throwable) {}
-
+        val items = parseHtmlCards(doc)
         return newHomePageResponse(
             listOf(HomePageList(request.name, items, isHorizontalImages = false)),
             hasNext = false
@@ -257,116 +219,98 @@ class MiruroProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.isBlank()) return emptyList()
 
-        // 1. Try Miruro search API
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        try {
-            val apiUrl = "$mainUrl/api/v1/anime?query=$encoded&limit=20"
-            val resp = app.get(apiUrl, headers = defaultHeaders, interceptor = webViewResolver)
-            if (resp.code == 200) {
-                val contentType = resp.headers["content-type"] ?: ""
-                val text = if (contentType.contains("octet-stream", ignoreCase = true)) {
-                    decryptCatalog(resp.body.bytes())
-                } else {
-                    resp.text
-                }
-                val parsed = parseAnimeJsonList(text)
-                if (parsed.isNotEmpty()) return parsed
-            }
-        } catch (_: Throwable) {}
+        val encoded = java.net.URLEncoder.encode(query.trim(), "UTF-8")
+        val searchUrl = "$mainUrl/search?q=$encoded"
+        val doc = try {
+            app.get(searchUrl, headers = defaultHeaders, interceptor = webViewResolver).document
+        } catch (_: Throwable) {
+            return emptyList()
+        }
 
-        // 2. Fallback to search HTML page
-        try {
-            val htmlUrl = "$mainUrl/search?query=$encoded"
-            val doc = app.get(htmlUrl, headers = defaultHeaders, interceptor = webViewResolver).document
-            val ldItems = parseLdJsonItems(doc)
-            if (ldItems.isNotEmpty()) return ldItems
-            return parseHtmlCards(doc)
-        } catch (_: Throwable) {}
-
-        return emptyList()
+        return parseHtmlCards(doc)
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val animeId = extractAnimeId(url)
+        val animeId = extractAnimeId(url) ?: return null
+        val watchUrl = "$mainUrl/watch/$animeId"
 
-        // 1. Try API first if we have an ID
-        if (animeId != null) {
-            try {
-                val detailUrl = "$mainUrl/api/v1/anime/$animeId"
-                val resp = app.get(detailUrl, headers = defaultHeaders, interceptor = webViewResolver)
-                if (resp.code == 200) {
-                    val contentType = resp.headers["content-type"] ?: ""
-                    val text = if (contentType.contains("octet-stream", ignoreCase = true)) {
-                        decryptCatalog(resp.body.bytes())
-                    } else {
-                        resp.text
-                    }
-                    val anime = mapper.readValue<MiruroAnimeDetail>(text)
-                    return buildAnimeLoadResponse(anime, url)
-                }
-            } catch (_: Throwable) {}
-        }
-
-        // 2. Fetch HTML page
         val doc = try {
-            app.get(url, headers = defaultHeaders, interceptor = webViewResolver).document
+            app.get(watchUrl, headers = defaultHeaders, interceptor = webViewResolver).document
         } catch (_: Throwable) {
-            return null
-        }
-
-        // Try extracting embedded SSR data first (Miruro embeds complete anime JSON in script tag)
-        val ssrRegex = Regex("""window\.__SSR_DATA__\s*=\s*["']([^"']+)["']""")
-        val ssrMatch = ssrRegex.find(doc.html())
-        if (ssrMatch != null) {
             try {
-                val b64 = ssrMatch.groupValues[1]
-                val decoded = base64Decode(b64)
-                val json = decryptCatalog(decoded)
-                val anime = mapper.readValue<MiruroAnimeDetail>(json)
-                return buildAnimeLoadResponse(anime, url)
-            } catch (_: Throwable) {}
-        }
-
-        // 3. Fallback to HTML meta tags
-        val rawTitle = doc.selectFirst("h1, meta[property='og:title']")?.let {
-            if (it.tagName() == "meta") it.attr("content") else it.text()
-        } ?: return null
-
-        val title = rawTitle.replace(Regex("""(?i)\s*[·\-|]\s*Miruro.*"""), "").trim()
-        val poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
-        val plot = doc.selectFirst("meta[name='description'], meta[property='og:description']")?.attr("content")
-
-        val episodes = mutableListOf<Episode>()
-        val epElements = doc.select("a[href*='/watch/'], a[href*='/info/']")
-        if (epElements.isNotEmpty()) {
-            epElements.forEachIndexed { idx, elem ->
-                val epHref = elem.attr("href").trim()
-                if (epHref.contains("/watch/")) {
-                    val epNum = idx + 1
-                    episodes.add(
-                        newEpisode(fixUrl(epHref)) {
-                            this.name = "Episode $epNum"
-                            this.episode = epNum
-                        }
-                    )
-                }
+                app.get(url, headers = defaultHeaders, interceptor = webViewResolver).document
+            } catch (_: Throwable) {
+                return null
             }
         }
 
-        if (episodes.isEmpty()) {
-            val watchUrl = if (url.contains("/info/")) url.replace("/info/", "/watch/") else url
-            episodes.add(
-                newEpisode(watchUrl) {
-                    this.name = title
-                    this.episode = 1
-                }
-            )
+        val rawTitle = doc.selectFirst("meta[property='og:title']")?.attr("content")
+            ?: doc.selectFirst("h1")?.text()
+            ?: url.split("/").lastOrNull()?.replace("-", " ")
+            ?: "Anime"
+
+        val cleanTitle = rawTitle
+            .replace(Regex("""(?i)^Watch\s+"""), "")
+            .replace(Regex("""(?i)^Stream\s+"""), "")
+            .replace(Regex("""(?i)\s*[·\-|]\s*Miruro.*"""), "")
+            .trim()
+
+        val poster = doc.selectFirst("meta[property='og:image']")?.attr("content")
+            ?: doc.selectFirst("meta[name='twitter:image']")?.attr("content")
+        val banner = doc.selectFirst("meta[name='twitter:image']")?.attr("content")
+            ?: poster
+        val plot = doc.selectFirst("meta[property='og:description']")?.attr("content")
+            ?: doc.selectFirst("meta[name='description']")?.attr("content")
+
+        val html = doc.html()
+        val episodes = mutableListOf<Episode>()
+
+        // 1. Extract episode items from embedded SvelteKit page data
+        val epPattern = Regex("""\{id:"([^"]*)",number:(\d+),title:"([^"]*)",image:"([^"]*)"""")
+        val epMatches = epPattern.findAll(html).toList()
+
+        if (epMatches.isNotEmpty()) {
+            epMatches.forEach { match ->
+                val epNum = match.groupValues[2].toIntOrNull() ?: 1
+                val epTitle = match.groupValues[3].ifBlank { "Episode $epNum" }
+                val epThumb = match.groupValues[4].takeIf { it.isNotBlank() }
+
+                val payload = MiruroPlayPayload(animeId = animeId, episodeId = epNum.toString())
+                val dataJson = mapper.writeValueAsString(payload)
+
+                episodes.add(
+                    newEpisode(dataJson) {
+                        this.name = epTitle
+                        this.episode = epNum
+                        this.posterUrl = epThumb
+                    }
+                )
+            }
         }
 
-        return newAnimeLoadResponse(title, url, TvType.Anime) {
+        // 2. Fallback to episode_counts or single episode if no regex matches
+        if (episodes.isEmpty()) {
+            val countPattern = Regex("""episode_counts:\{[^}]*?(?:raw|sub):(\d+)""")
+            val totalEps = countPattern.find(html)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("""episode_count:(\d+)""").find(html)?.groupValues?.get(1)?.toIntOrNull()
+                ?: 1
+
+            for (i in 1..totalEps) {
+                val payload = MiruroPlayPayload(animeId = animeId, episodeId = i.toString())
+                episodes.add(
+                    newEpisode(mapper.writeValueAsString(payload)) {
+                        this.name = "Episode $i"
+                        this.episode = i
+                    }
+                )
+            }
+        }
+
+        return newAnimeLoadResponse(cleanTitle, url, TvType.Anime) {
             this.posterUrl = poster
+            this.backgroundPosterUrl = banner
             this.plot = plot
-            addEpisodes(DubStatus.Subbed, episodes)
+            addEpisodes(DubStatus.Subbed, episodes.distinctBy { it.episode })
         }
     }
 
@@ -389,286 +333,198 @@ class MiruroProvider : MainAPI() {
             return foundAny
         }
 
-        // 2. Playback payload (JSON containing animeId and episodeId)
-        if (data.startsWith("{") && data.contains("animeId")) {
-            try {
-                val payload = mapper.readValue<MiruroPlayPayload>(data)
-                val playUrl = "$mainUrl/api/v1/anime/${payload.animeId}/episodes/${payload.episodeId}/play"
-                val resp = app.get(playUrl, headers = defaultHeaders, interceptor = webViewResolver)
-                if (resp.code == 200) {
-                    val contentType = resp.headers["content-type"] ?: ""
-                    val text = if (contentType.contains("octet-stream", ignoreCase = true)) {
-                        decryptCatalog(resp.body.bytes())
-                    } else {
-                        resp.text
-                    }
-
-                    val playData = mapper.readValue<MiruroPlayResponse>(text)
-
-                    // Extract subtitles from playback response
-                    for (sub in playData.subtitles.orEmpty()) {
-                        val subFile = sub.file ?: continue
-                        val finalSubUrl = if (subFile.startsWith("http")) {
-                            subFile
-                        } else {
-                            buildKeeplyProxyUrl(subFile, "$mainUrl/", "sub.vtt")
-                        }
-                        subtitleCallback.invoke(
-                            newSubtitleFile(
-                                lang = sub.label ?: sub.language ?: "English",
-                                url = finalSubUrl
-                            )
-                        )
-                    }
-
-                    for (track in playData.tracks.orEmpty()) {
-                        for (prov in track.providers.orEmpty()) {
-                            for (server in prov.servers.orEmpty()) {
-                                // Extract server level subtitles if available
-                                for (sub in server.subtitles.orEmpty()) {
-                                    val subFile = sub.file ?: continue
-                                    val finalSubUrl = if (subFile.startsWith("http")) {
-                                        subFile
-                                    } else {
-                                        buildKeeplyProxyUrl(subFile, "$mainUrl/", "sub.vtt")
-                                    }
-                                    subtitleCallback.invoke(
-                                        newSubtitleFile(
-                                            lang = sub.label ?: sub.language ?: "English",
-                                            url = finalSubUrl
-                                        )
-                                    )
-                                }
-
-                                for (stream in server.streams.orEmpty()) {
-                                    val streamUrl = stream.url
-                                    if (!streamUrl.isNullOrBlank()) {
-                                        val finalUrl = if (server.proxy == true || prov.proxy == true) {
-                                            buildKeeplyProxyUrl(streamUrl, "$mainUrl/", "pl.m3u8")
-                                        } else {
-                                            streamUrl
-                                        }
-
-                                        try {
-                                            M3u8Helper.generateM3u8(
-                                                source = "$name - ${server.server ?: prov.provider ?: "HD"} (${track.track ?: "sub"})",
-                                                streamUrl = finalUrl,
-                                                referer = "$mainUrl/"
-                                            ).forEach {
-                                                callback.invoke(it)
-                                                foundAny = true
-                                            }
-                                        } catch (_: Throwable) {
-                                            callback.invoke(
-                                                newExtractorLink(
-                                                    source = name,
-                                                    name = "$name - ${server.server ?: "HD"}",
-                                                    url = finalUrl,
-                                                    type = ExtractorLinkType.M3U8
-                                                ) {
-                                                    this.referer = "$mainUrl/"
-                                                    this.quality = Qualities.P1080.value
-                                                }
-                                            )
-                                            foundAny = true
-                                        }
-                                    }
-
-                                    val embed = stream.embed ?: server.embed
-                                    if (embed?.url != null) {
-                                        try {
-                                            if (loadExtractor(embed.url, "$mainUrl/", subtitleCallback, callback)) {
-                                                foundAny = true
-                                            }
-                                        } catch (_: Throwable) {}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (_: Throwable) {}
+        // 2. Determine target watch URL
+        val watchUrl = if (data.startsWith("{") && data.contains("animeId")) {
+            val payload = try {
+                mapper.readValue<MiruroPlayPayload>(data)
+            } catch (_: Throwable) { null }
+            if (payload != null) {
+                "$mainUrl/watch/${payload.animeId}?ep=${payload.episodeId}"
+            } else {
+                fixUrl(data)
+            }
+        } else if (data.startsWith("http") || data.startsWith("/")) {
+            fixUrl(data)
+        } else {
+            "$mainUrl/watch/$data"
         }
 
-        // 3. Fallback: inspect watch page iframes
-        val watchUrl = if (data.startsWith("http")) data else "$mainUrl$data"
-        try {
-            val doc = app.get(watchUrl, headers = defaultHeaders, interceptor = webViewResolver).document
-            val iframes = doc.select("iframe[src]").mapNotNull { it.attr("src") }
-            for (iframe in iframes) {
-                if (iframe.isNotBlank() && !iframe.startsWith("javascript:")) {
-                    try {
-                        if (loadExtractor(fixUrl(iframe), watchUrl, subtitleCallback, callback)) {
-                            foundAny = true
-                        }
-                    } catch (_: Throwable) {}
+        // 3. Fetch watch page HTML
+        val pageHtml = try {
+            app.get(watchUrl, headers = defaultHeaders, interceptor = webViewResolver).text
+        } catch (_: Throwable) {
+            return false
+        }
+
+        // 4. Extract all m3u8 streams embedded in watch page
+        val m3u8Regex = Regex("""https?://[^"'\s;,\\)]+\.m3u8[^"'\s;,\\)]*""")
+        val m3u8Urls = m3u8Regex.findAll(pageHtml).map { it.value }.toSet()
+
+        val ultracloudHeaders = mapOf(
+            "Origin" to "https://ultracloud.cc",
+            "Referer" to "https://ultracloud.cc/",
+            "User-Agent" to USER_AGENT
+        )
+        val megaplayHeaders = mapOf(
+            "Origin" to "https://megaplay.buzz",
+            "Referer" to "https://megaplay.buzz/",
+            "User-Agent" to USER_AGENT
+        )
+        val defaultStreamHeaders = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Referer" to "$mainUrl/"
+        )
+
+        for (streamUrl in m3u8Urls) {
+            val (sourceName, referer, headers) = when {
+                streamUrl.contains("willowblueice") ||
+                streamUrl.contains("riverpalm") ||
+                streamUrl.contains("windstartide") ||
+                streamUrl.contains("velvetvault") ||
+                streamUrl.contains("leafshoreriver") ||
+                streamUrl.contains("ultracloud") -> {
+                    Triple("$name - Ultra Stream", "https://ultracloud.cc/", ultracloudHeaders)
+                }
+                streamUrl.contains("nexabloom") ||
+                streamUrl.contains("imgnex") ||
+                streamUrl.contains("shiora") ||
+                streamUrl.contains("megaplay") -> {
+                    Triple("$name - Fast Stream", "https://megaplay.buzz/", megaplayHeaders)
+                }
+                streamUrl.contains("keeply") -> {
+                    Triple("$name - Keeply Stream", "$mainUrl/", defaultStreamHeaders)
+                }
+                else -> {
+                    Triple("$name - Stream", "$mainUrl/", defaultStreamHeaders)
                 }
             }
-        } catch (_: Throwable) {}
+
+            try {
+                M3u8Helper.generateM3u8(
+                    source = sourceName,
+                    streamUrl = streamUrl,
+                    referer = referer,
+                    headers = headers
+                ).forEach { link ->
+                    callback.invoke(link)
+                    foundAny = true
+                }
+            } catch (_: Throwable) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = sourceName,
+                        url = streamUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = referer
+                        this.headers = headers
+                        this.quality = Qualities.P1080.value
+                    }
+                )
+                foundAny = true
+            }
+        }
+
+        // 5. Extract all subtitles from watch page
+        val vttRegex = Regex("""https?://[^"'\s;,\\)]+\.vtt[^"'\s;,\\)]*""")
+        val vttUrls = vttRegex.findAll(pageHtml)
+            .map { it.value }
+            .filterNot { it.contains("preview", ignoreCase = true) || it.contains("thumbnail", ignoreCase = true) }
+            .toSet()
+
+        for (vttUrl in vttUrls) {
+            val lang = when {
+                vttUrl.contains("eng", ignoreCase = true) -> "English"
+                vttUrl.contains("spa", ignoreCase = true) -> "Spanish"
+                vttUrl.contains("fre", ignoreCase = true) -> "French"
+                vttUrl.contains("ger", ignoreCase = true) -> "German"
+                vttUrl.contains("rus", ignoreCase = true) -> "Russian"
+                vttUrl.contains("por", ignoreCase = true) -> "Portuguese"
+                vttUrl.contains("ita", ignoreCase = true) -> "Italian"
+                vttUrl.contains("pol", ignoreCase = true) -> "Polish"
+                vttUrl.contains("ara", ignoreCase = true) -> "Arabic"
+                vttUrl.contains("tha", ignoreCase = true) -> "Thai"
+                vttUrl.contains("vie", ignoreCase = true) -> "Vietnamese"
+                vttUrl.contains("ind", ignoreCase = true) -> "Indonesian"
+                vttUrl.contains("jpn", ignoreCase = true) -> "Japanese"
+                vttUrl.contains("hin", ignoreCase = true) -> "Hindi"
+                else -> "Subtitle"
+            }
+            subtitleCallback.invoke(
+                newSubtitleFile(lang = lang, url = vttUrl)
+            )
+        }
+
+        // 6. Fallback: inspect any embedded iframes
+        val doc = Jsoup.parse(pageHtml, watchUrl)
+        for (iframe in doc.select("iframe[src]")) {
+            val src = iframe.attr("src")
+            if (src.isNotBlank() && !src.startsWith("javascript:")) {
+                try {
+                    if (loadExtractor(fixUrl(src), watchUrl, subtitleCallback, callback)) {
+                        foundAny = true
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
 
         return foundAny
     }
 
     // Helper parsers
 
-    private fun extractAnimeId(url: String): String? {
+    fun extractAnimeId(url: String): String? {
         val regex = Regex("""/(?:info|watch)/([a-zA-Z0-9_\-]+)""")
         return regex.find(url)?.groupValues?.get(1)
     }
 
-    private fun parseAnimeJsonList(jsonText: String): List<SearchResponse> {
-        val results = mutableListOf<SearchResponse>()
-        try {
-            val root = mapper.readTree(jsonText)
-            val items = if (root.isArray) root else root.get("data") ?: root.get("items") ?: root
-            if (items != null && items.isArray) {
-                for (node in items) {
-                    val id = node.get("id")?.asText() ?: continue
-                    val titleNode = node.get("title")
-                    val title = titleNode?.get("english")?.asText()
-                        ?: titleNode?.get("romaji")?.asText()
-                        ?: titleNode?.get("native")?.asText()
-                        ?: node.get("name")?.asText()
-                        ?: continue
-
-                    val poster = node.get("cover_image")?.asText()
-                        ?: node.get("cover_url")?.asText()
-                        ?: node.get("poster")?.asText()
-
-                    val format = node.get("format")?.asText()
-                    val type = getType(format)
-
-                    val animeUrl = "$mainUrl/info/$id"
-                    results.add(
-                        newAnimeSearchResponse(title, animeUrl, type) {
-                            this.posterUrl = poster
-                        }
-                    )
-                }
-            }
-        } catch (_: Throwable) {}
-        return results
-    }
-
-    private fun parseLdJsonItems(doc: Document): List<SearchResponse> {
+    fun parseHtmlCards(doc: Document): List<SearchResponse> {
         val list = mutableListOf<SearchResponse>()
-        val scripts = doc.select("script[type='application/ld+json']")
-        for (script in scripts) {
-            try {
-                val tree = mapper.readTree(script.data())
-                val elements = when {
-                    tree.has("itemListElement") -> tree.get("itemListElement")
-                    tree.isArray -> tree
-                    else -> null
-                }
-                if (elements != null && elements.isArray) {
-                    for (el in elements) {
-                        val name = el.get("name")?.asText()
-                        val itemUrl = el.get("url")?.asText() ?: el.get("item")?.asText()
-                        if (!name.isNullOrBlank() && !itemUrl.isNullOrBlank() && itemUrl.contains("/info/")) {
-                            list.add(
-                                newAnimeSearchResponse(name, fixUrl(itemUrl), TvType.Anime)
-                            )
-                        }
-                    }
-                }
-            } catch (_: Throwable) {}
-        }
-        return list
-    }
-
-    private fun parseHtmlCards(doc: Document): List<SearchResponse> {
-        val list = mutableListOf<SearchResponse>()
-        val links = doc.select("a[href*='/info/']")
+        val links = doc.select("a[href*='/info/'], a[href*='/watch/']")
         for (link in links) {
             val href = link.attr("href").trim()
-            val title = link.attr("title").ifBlank { link.text().trim() }
-            val poster = link.selectFirst("img")?.let { it.attr("src").ifBlank { it.attr("data-src") } }
-            if (title.isNotBlank() && href.isNotBlank()) {
-                list.add(
-                    newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
-                        this.posterUrl = poster
-                    }
-                )
+            if (href.isBlank()) continue
+
+            val fullUrl = fixUrl(href)
+
+            var title = link.attr("aria-label").trim()
+            if (title.isBlank()) {
+                title = link.attr("title").trim()
             }
+            val img = link.selectFirst("img")
+                ?: link.parent()?.selectFirst("img")
+                ?: link.closest("article, div")?.selectFirst("img")
+
+            if (title.isBlank() && img != null) {
+                title = img.attr("alt").trim()
+            }
+            if (title.isBlank()) {
+                val heading = link.selectFirst("h1, h2, h3, h4, .title, span")?.text()?.trim()
+                if (!heading.isNullOrBlank()) title = heading
+            }
+            if (title.isBlank()) {
+                val slug = href.split("/").lastOrNull()?.takeIf { it.isNotBlank() && !it.startsWith("?") }
+                if (slug != null) {
+                    title = slug.replace("-", " ")
+                        .split(" ")
+                        .joinToString(" ") { word -> word.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() } }
+                }
+            }
+
+            if (title.isBlank() || title.equals("Miruro", ignoreCase = true)) continue
+
+            val poster = img?.let {
+                it.attr("src").ifBlank { it.attr("data-src") }
+            }?.takeIf { it.isNotBlank() }
+
+            list.add(
+                newAnimeSearchResponse(title, fullUrl, TvType.Anime) {
+                    this.posterUrl = poster
+                }
+            )
         }
         return list.distinctBy { it.url }
-    }
-
-    private suspend fun buildAnimeLoadResponse(anime: MiruroAnimeDetail, originalUrl: String): AnimeLoadResponse {
-        val title = anime.title?.english ?: anime.title?.romaji ?: anime.title?.native ?: "Anime"
-        val type = getType(anime.format)
-        val episodes = mutableListOf<Episode>()
-
-        // Fetch episodes from Miruro episodes endpoint
-        try {
-            val epsUrl = "$mainUrl/api/v1/anime/${anime.id}/episodes"
-            val resp = app.get(epsUrl, headers = defaultHeaders, interceptor = webViewResolver)
-            if (resp.code == 200) {
-                val contentType = resp.headers["content-type"] ?: ""
-                val text = if (contentType.contains("octet-stream", ignoreCase = true)) {
-                    decryptCatalog(resp.body.bytes())
-                } else {
-                    resp.text
-                }
-                val epList = mapper.readValue<List<MiruroEpisodeItem>>(text)
-                epList.forEachIndexed { idx, epItem ->
-                    val epNumber = epItem.episodeNumber ?: (idx + 1)
-                    val epName = epItem.title ?: "Episode $epNumber"
-                    val payload = MiruroPlayPayload(
-                        animeId = anime.id,
-                        episodeId = epItem.id ?: epNumber.toString()
-                    )
-                    episodes.add(
-                        newEpisode(mapper.writeValueAsString(payload)) {
-                            this.name = epName
-                            this.episode = epNumber
-                            this.posterUrl = epItem.thumbnail
-                        }
-                    )
-                }
-            }
-        } catch (_: Throwable) {}
-
-        if (episodes.isEmpty()) {
-            val total = anime.episodeCount ?: 1
-            for (i in 1..total) {
-                val payload = MiruroPlayPayload(animeId = anime.id, episodeId = i.toString())
-                episodes.add(
-                    newEpisode(mapper.writeValueAsString(payload)) {
-                        this.name = "Episode $i"
-                        this.episode = i
-                    }
-                )
-            }
-        }
-
-        return newAnimeLoadResponse(title, originalUrl, type) {
-            this.posterUrl = anime.coverUrl ?: anime.coverImage
-            this.backgroundPosterUrl = anime.bannerUrl ?: anime.backgroundUrl
-            this.plot = anime.description
-            this.year = anime.seasonYear ?: anime.startedOn?.take(4)?.toIntOrNull()
-            this.tags = anime.genres
-            this.showStatus = getStatus(anime.status)
-            addEpisodes(DubStatus.Subbed, episodes)
-
-            if (anime.anilistId != null) {
-                addAniListId(anime.anilistId)
-            } else {
-                anime.externalIds?.get("anilist")?.firstOrNull()?.toIntOrNull()?.let { addAniListId(it) }
-            }
-
-            if (anime.malId != null) {
-                addMalId(anime.malId)
-            } else {
-                anime.externalIds?.get("mal")?.firstOrNull()?.toIntOrNull()?.let { addMalId(it) }
-            }
-
-            val trailerId = anime.trailerYoutubeId
-            if (!trailerId.isNullOrBlank()) {
-                addTrailer("https://www.youtube.com/watch?v=$trailerId")
-            }
-        }
     }
 }
 
