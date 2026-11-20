@@ -1,0 +1,80 @@
+name: Build and Publish Cloudstream Plugins
+
+concurrency:
+  group: "build"
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - main
+    paths-ignore:
+      - '*.md'
+      - '.gitignore'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          path: "src"
+
+      - name: Checkout builds branch
+        uses: actions/checkout@v4
+        with:
+          ref: "builds"
+          path: "builds"
+        continue-on-error: true
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build Plugins
+        run: |
+          cd "$GITHUB_WORKSPACE/src"
+          chmod +x gradlew
+          ./gradlew make makePluginsJson
+          ./gradlew ensureJarCompatibility || true
+
+          mkdir -p "$GITHUB_WORKSPACE/builds"
+          cp -f MiruroProvider/build/*.cs3 "$GITHUB_WORKSPACE/builds/" 2>/dev/null || true
+          cp -f MiruroProvider/build/*.jar "$GITHUB_WORKSPACE/builds/" 2>/dev/null || true
+          cp -f AniPmProvider/build/*.cs3 "$GITHUB_WORKSPACE/builds/" 2>/dev/null || true
+          cp -f AniPmProvider/build/*.jar "$GITHUB_WORKSPACE/builds/" 2>/dev/null || true
+          cp -f build/plugins.json "$GITHUB_WORKSPACE/builds/" 2>/dev/null || true
+          cp -f repo.json "$GITHUB_WORKSPACE/builds/" 2>/dev/null || true
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudstream-plugins
+          path: |
+            builds/*.cs3
+            builds/*.jar
+            builds/*.json
+
+      - name: Push builds branch
+        run: |
+          cd "$GITHUB_WORKSPACE/builds"
+          if [ ! -d ".git" ]; then
+            git init
+            git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$GITHUB_REPOSITORY.git"
+            git checkout -b builds
+          fi
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A
+          git commit -m "Auto-build plugins: $GITHUB_SHA" || exit 0
+          git push -u origin builds --force
