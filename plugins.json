@@ -1,0 +1,50 @@
+[
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=ani.pm&sz=%size%",
+        "jarFileSize": 157966,
+        "fileHash": "sha256-64d7a00bd44412aec80c1e2f6adfa90b847a5bf127d320345f8ca96dd5ca670f",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/sabbirbd3001-source/cloudstream-miruro-anipm",
+        "fileSize": 41307,
+        "status": 1,
+        "authors": [
+            "Cloudstream Community"
+        ],
+        "tvTypes": [
+            "Anime",
+            "AnimeMovie",
+            "OVA"
+        ],
+        "version": 1,
+        "internalName": "AniPmProvider",
+        "jarUrl": "https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/AniPmProvider.jar",
+        "description": "Watch high quality anime with sub and dub from Ani.pm (ani.pm)",
+        "url": "https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/AniPmProvider.cs3",
+        "name": "AniPmProvider",
+        "jarHash": "sha256-fdd2132a91cbd56364c8c6df0c597f2b0ed7ff25e843fffd61259c3fc28ce8b7"
+    },
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=miruro.cx&sz=%size%",
+        "jarFileSize": 158747,
+        "fileHash": "sha256-5e94c5e442d881533ebf351a01a2cd9675709f75a5c13962cd82b93614f9ee61",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/sabbirbd3001-source/cloudstream-miruro-anipm",
+        "fileSize": 44983,
+        "status": 1,
+        "authors": [
+            "Cloudstream Community"
+        ],
+        "tvTypes": [
+            "Anime",
+            "AnimeMovie",
+            "OVA"
+        ],
+        "version": 1,
+        "internalName": "MiruroProvider",
+        "jarUrl": "https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/MiruroProvider.jar",
+        "description": "Watch anime online in HD free with sub and dub from Miruro (miruro.cx)",
+        "url": "https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/MiruroProvider.cs3",
+        "name": "MiruroProvider",
+        "jarHash": "sha256-80540b760d3dace3e6b471496f27423c3db718b2f7341abe57a90932504f5fad"
+    }
+]

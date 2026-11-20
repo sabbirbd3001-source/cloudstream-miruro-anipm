@@ -1,0 +1,8 @@
+{
+  "name": "Miruro & Ani.pm Anime Repository",
+  "description": "Official Cloudstream extensions repository for Miruro (miruro.cx) and Ani.pm (ani.pm)",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/plugins.json"
+  ]
+}
