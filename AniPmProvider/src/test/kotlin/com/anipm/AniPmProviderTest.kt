@@ -259,7 +259,8 @@ class AniPmProviderTest {
             id = 1642,
             ep = 5,
             hasSub = true,
-            hasDub = true
+            hasDub = true,
+            preferredChannel = "dub"
         )
         val json = mapper.writeValueAsString(payload)
         val deserialized = mapper.readValue<AniPmPlayPayload>(json)
@@ -268,5 +269,6 @@ class AniPmProviderTest {
         assertEquals(5, deserialized.ep)
         assertTrue(deserialized.hasSub)
         assertTrue(deserialized.hasDub)
+        assertEquals("dub", deserialized.preferredChannel)
     }
 }

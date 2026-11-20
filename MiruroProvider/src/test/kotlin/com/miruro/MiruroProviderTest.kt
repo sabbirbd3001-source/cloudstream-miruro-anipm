@@ -285,4 +285,48 @@ class MiruroProviderTest {
         }
         assertEquals("https://megaplay.buzz", sub.headers?.get("Origin"))
     }
+
+    @Test
+    fun testStructuredServerStreamAndHeaderExtraction() {
+        val sampleJs = """
+            {server:"icarus-3-1",headers:{Origin:"https://ultracloud.cc",Referer:"https://ultracloud.cc/"},streams:[{url:"https://coralarch.coastowl.top/m/token123.m3u8",format:"hls"}]}
+            {server:"Vidstream-1",headers:{Referer:"https://megaplay.buzz/"},streams:[{url:"https://fetch.nexabloom.top/anime/master.m3u8?token=xyz",format:"hls"}]}
+            {server:"VidPlay",headers:{Referer:"https://vidtube.site/"},streams:[{url:"https://0arx3.crystaldrift.world/anime/master.m3u8?token=abc",format:"hls"}]}
+        """.trimIndent()
+
+        val serverRegex = Regex("""server:"([^"]+)"[^{}]*?(?:headers:\{([^}]+)\})?[^{}]*?streams:\[\{url:"([^"]+)"""")
+        val matches = serverRegex.findAll(sampleJs).toList()
+        assertEquals(3, matches.size)
+
+        assertEquals("icarus-3-1", matches[0].groupValues[1])
+        assertTrue(matches[0].groupValues[2].contains("Origin:\"https://ultracloud.cc\""))
+        assertEquals("https://coralarch.coastowl.top/m/token123.m3u8", matches[0].groupValues[3])
+
+        assertEquals("Vidstream-1", matches[1].groupValues[1])
+        assertTrue(matches[1].groupValues[2].contains("Referer:\"https://megaplay.buzz/\""))
+        assertEquals("https://fetch.nexabloom.top/anime/master.m3u8?token=xyz", matches[1].groupValues[3])
+
+        assertEquals("VidPlay", matches[2].groupValues[1])
+        assertTrue(matches[2].groupValues[2].contains("Referer:\"https://vidtube.site/\""))
+        assertEquals("https://0arx3.crystaldrift.world/anime/master.m3u8?token=abc", matches[2].groupValues[3])
+    }
+
+    @Test
+    fun testStructuredSubtitleExtraction() {
+        val sampleJs = """
+            subtitles:[{language:"en",label:"English",file:"https://coralarch.coastowl.top/a/sub123.jpeg",format:"vtt",default:true}]
+        """.trimIndent()
+
+        val subBlockRegex = Regex("""subtitles:\[([^\]]+)\]""")
+        val subObjRegex = Regex("""\{language:"([^"]*)",label:"([^"]*)",file:"([^"]+)"""")
+
+        val block = subBlockRegex.find(sampleJs)
+        assertNotNull(block)
+
+        val subMatch = subObjRegex.find(block!!.groupValues[1])
+        assertNotNull(subMatch)
+        assertEquals("en", subMatch!!.groupValues[1])
+        assertEquals("English", subMatch.groupValues[2])
+        assertEquals("https://coralarch.coastowl.top/a/sub123.jpeg", subMatch.groupValues[3])
+    }
 }

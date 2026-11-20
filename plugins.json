@@ -1,11 +1,11 @@
 [
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=ani.pm&sz=%size%",
-        "jarFileSize": 169444,
-        "fileHash": "sha256-0e9de77997248e4cf9fb8fde7488db3acde4fba19ef3d88f390e99c58bc589f9",
+        "jarFileSize": 175310,
+        "fileHash": "sha256-6531599fe81c7f222a901315093713d2d2a671704e620a33405d87f14b152b19",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/sabbirbd3001-source/cloudstream-miruro-anipm",
-        "fileSize": 43796,
+        "fileSize": 45742,
         "status": 1,
         "authors": [
             "Cloudstream Community"
@@ -15,21 +15,21 @@
             "AnimeMovie",
             "OVA"
         ],
-        "version": 1,
+        "version": 2,
         "internalName": "AniPmProvider",
         "jarUrl": "https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/AniPmProvider.jar",
         "description": "Watch high quality anime with sub and dub from Ani.pm (ani.pm)",
         "url": "https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/AniPmProvider.cs3",
         "name": "AniPmProvider",
-        "jarHash": "sha256-9b62831a2ded54a74ae388f3c1bc8ec73513dbe9d5edfc93caf506f6771a8d2d"
+        "jarHash": "sha256-3684bac7873e5e6f78e4338b25a961d576e2c16708c8a14b140fe8ad78d407ae"
     },
     {
         "iconUrl": "https://www.google.com/s2/favicons?domain=miruro.cx&sz=%size%",
-        "jarFileSize": 145750,
-        "fileHash": "sha256-645ee7c857422decabbfdaacd662582c5e074354610112cdacc1f06a5edc9176",
+        "jarFileSize": 172140,
+        "fileHash": "sha256-e705b7ad8a6833f629d8425a2bf5803bd0e0b8e81e2e44a38844f80b5853c75a",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/sabbirbd3001-source/cloudstream-miruro-anipm",
-        "fileSize": 39621,
+        "fileSize": 48108,
         "status": 1,
         "authors": [
             "Cloudstream Community"
@@ -39,12 +39,12 @@
             "AnimeMovie",
             "OVA"
         ],
-        "version": 1,
+        "version": 2,
         "internalName": "MiruroProvider",
         "jarUrl": "https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/MiruroProvider.jar",
         "description": "Watch anime online in HD free with sub and dub from Miruro (miruro.cx)",
         "url": "https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/MiruroProvider.cs3",
         "name": "MiruroProvider",
-        "jarHash": "sha256-79ef868fd0890ea50d300294d4ab17f9f031b8085a5f0d2a390dbc6e419760bc"
+        "jarHash": "sha256-f15b18855f29755a406fcb6047aaceedf00c030e0a89a6b7b77434fb97a196dc"
     }
 ]

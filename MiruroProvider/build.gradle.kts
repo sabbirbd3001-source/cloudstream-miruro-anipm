@@ -1,4 +1,4 @@
-version = 1
+version = 2
 
 cloudstream {
     description = "Watch anime online in HD free with sub and dub from Miruro (miruro.cx)"

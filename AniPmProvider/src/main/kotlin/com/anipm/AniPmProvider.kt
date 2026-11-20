@@ -247,32 +247,43 @@ class AniPmProvider : MainAPI() {
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
 
+        val effectiveSource = if (detail.settlarId != null) "settlar" else (detail.source ?: sourceParam)
+        val effectiveId = detail.settlarId ?: (detail.id ?: idParam.toIntOrNull() ?: 0)
+
         detail.episodes.orEmpty().forEach { ep ->
             val epNum = ep.number ?: 1
             val epName = ep.title ?: "Episode $epNum"
             val thumb = fixAniPmUrl(mainUrl, ep.thumbnail)
 
-            val payload = AniPmPlayPayload(
-                source = detail.source ?: sourceParam,
-                id = detail.id ?: idParam.toIntOrNull() ?: 0,
+            val basePayload = AniPmPlayPayload(
+                source = effectiveSource,
+                id = effectiveId,
                 ep = epNum,
                 hasSub = ep.sub == true,
                 hasDub = ep.dub == true
             )
-            val dataString = mapper.writeValueAsString(payload)
-
-            val episodeObj = newEpisode(dataString) {
-                this.name = epName
-                this.episode = epNum
-                this.posterUrl = thumb
-                this.description = ep.description
-            }
 
             if (ep.sub == true || ep.sub == null) {
-                subEpisodes.add(episodeObj)
+                val subPayload = basePayload.copy(preferredChannel = "sub")
+                subEpisodes.add(
+                    newEpisode(mapper.writeValueAsString(subPayload)) {
+                        this.name = epName
+                        this.episode = epNum
+                        this.posterUrl = thumb
+                        this.description = ep.description
+                    }
+                )
             }
             if (ep.dub == true) {
-                dubEpisodes.add(episodeObj)
+                val dubPayload = basePayload.copy(preferredChannel = "dub")
+                dubEpisodes.add(
+                    newEpisode(mapper.writeValueAsString(dubPayload)) {
+                        this.name = epName
+                        this.episode = epNum
+                        this.posterUrl = thumb
+                        this.description = ep.description
+                    }
+                )
             }
         }
 
@@ -292,11 +303,12 @@ class AniPmProvider : MainAPI() {
             } else if (subEpisodes.isEmpty()) {
                 // Fallback single episode
                 val fallbackPayload = AniPmPlayPayload(
-                    source = detail.source ?: sourceParam,
-                    id = detail.id ?: idParam.toIntOrNull() ?: 0,
+                    source = effectiveSource,
+                    id = effectiveId,
                     ep = 1,
                     hasSub = true,
-                    hasDub = false
+                    hasDub = false,
+                    preferredChannel = "sub"
                 )
                 addEpisodes(
                     DubStatus.Subbed,
@@ -327,10 +339,32 @@ class AniPmProvider : MainAPI() {
 
         // 1. Direct stream check
         if (data.contains(".m3u8", ignoreCase = true)) {
+            val mediaHeaders = mapOf(
+                "User-Agent" to USER_AGENT,
+                "Referer" to "https://embed.settlar.io/",
+                "Origin" to "https://embed.settlar.io"
+            )
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$name [Auto]",
+                    url = data,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "https://embed.settlar.io/"
+                    this.headers = mediaHeaders
+                    this.quality = Qualities.P1080.value
+                }
+            )
+            foundAny = true
             try {
-                M3u8Helper.generateM3u8(name, data, "$mainUrl/").forEach {
+                M3u8Helper.generateM3u8(
+                    source = name,
+                    streamUrl = data,
+                    referer = "https://embed.settlar.io/",
+                    headers = mediaHeaders
+                ).forEach {
                     callback.invoke(it)
-                    foundAny = true
                 }
             } catch (_: Throwable) {}
             return foundAny
@@ -343,11 +377,16 @@ class AniPmProvider : MainAPI() {
             return false
         }
 
-        // Channels to resolve: Sub, and Dub if available
+        // Channels to resolve: prioritize user's selected track (sub or dub)
         val channels = mutableListOf<String>()
-        if (payload.hasSub) channels.add("sub")
-        if (payload.hasDub) channels.add("dub")
-        if (channels.isEmpty()) channels.add("sub")
+        if (payload.preferredChannel == "dub" && payload.hasDub) {
+            channels.add("dub")
+            if (payload.hasSub) channels.add("sub")
+        } else {
+            if (payload.hasSub) channels.add("sub")
+            if (payload.hasDub) channels.add("dub")
+        }
+        if (channels.isEmpty()) channels.add(payload.preferredChannel ?: "sub")
 
         for (channel in channels) {
             try {
@@ -518,6 +557,7 @@ data class AniPmAnimeItem(
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class AniPmSeriesDetail(
     @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("settlarId") val settlarId: Int? = null,
     @JsonProperty("source") val source: String? = null,
     @JsonProperty("slug") val slug: String? = null,
     @JsonProperty("routeId") val routeId: String? = null,
@@ -557,7 +597,8 @@ data class AniPmPlayPayload(
     val id: Int,
     val ep: Int,
     val hasSub: Boolean = true,
-    val hasDub: Boolean = false
+    val hasDub: Boolean = false,
+    val preferredChannel: String? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

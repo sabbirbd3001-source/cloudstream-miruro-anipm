@@ -364,12 +364,118 @@ class MiruroProvider : MainAPI() {
     ): Boolean {
         var foundAny = false
 
+        val ultracloudHeaders = mapOf(
+            "Origin" to "https://ultracloud.cc",
+            "Referer" to "https://ultracloud.cc/",
+            "User-Agent" to USER_AGENT
+        )
+        val megaplayHeaders = mapOf(
+            "Origin" to "https://megaplay.buzz",
+            "Referer" to "https://megaplay.buzz/",
+            "User-Agent" to USER_AGENT
+        )
+        val vidtubeHeaders = mapOf(
+            "Origin" to "https://vidtube.site",
+            "Referer" to "https://vidtube.site/",
+            "User-Agent" to USER_AGENT
+        )
+        val vhscdnHeaders = mapOf(
+            "Referer" to "https://play.vhscdn.to/",
+            "User-Agent" to USER_AGENT
+        )
+        val defaultStreamHeaders = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Referer" to "$mainUrl/"
+        )
+
+        fun getStreamMetadata(streamUrl: String, rawHeaders: String? = null, serverName: String? = null): Triple<String, String, Map<String, String>> {
+            if (!rawHeaders.isNullOrBlank()) {
+                val originMatch = Regex("""Origin:"([^"]+)"""").find(rawHeaders)?.groupValues?.get(1)
+                val refMatch = Regex("""Referer:"([^"]+)"""").find(rawHeaders)?.groupValues?.get(1)
+                if (originMatch != null || refMatch != null) {
+                    val ref = refMatch ?: (originMatch?.let { if (it.endsWith("/")) it else "$it/" } ?: "$mainUrl/")
+                    val hMap = mutableMapOf(
+                        "User-Agent" to USER_AGENT,
+                        "Referer" to ref
+                    )
+                    if (originMatch != null) {
+                        hMap["Origin"] = originMatch
+                    } else if (ref.contains("megaplay")) {
+                        hMap["Origin"] = "https://megaplay.buzz"
+                    } else if (ref.contains("ultracloud")) {
+                        hMap["Origin"] = "https://ultracloud.cc"
+                    }
+                    val sName = when {
+                        ref.contains("ultracloud") -> "$name - Ultra Stream"
+                        ref.contains("megaplay") -> "$name - Fast Stream"
+                        ref.contains("vidtube") -> "$name - VidPlay"
+                        ref.contains("vhscdn") -> "$name - Vidplay"
+                        serverName != null -> "$name - $serverName"
+                        else -> "$name - Stream"
+                    }
+                    return Triple(sName, ref, hMap)
+                }
+            }
+
+            return when {
+                streamUrl.contains("/m/") ||
+                streamUrl.contains("keeply") ||
+                streamUrl.contains("coastowl") ||
+                streamUrl.contains("crystal-") ||
+                streamUrl.contains("northmaple") ||
+                streamUrl.contains("sailorbit") ||
+                streamUrl.contains("willowblueice") ||
+                streamUrl.contains("riverpalm") ||
+                streamUrl.contains("windstartide") ||
+                streamUrl.contains("velvetvault") ||
+                streamUrl.contains("leafshoreriver") ||
+                streamUrl.contains("ultracloud") -> {
+                    Triple("$name - Ultra Stream", "https://ultracloud.cc/", ultracloudHeaders)
+                }
+                streamUrl.contains("crystaldrift") || streamUrl.contains("vidtube") -> {
+                    Triple("$name - VidPlay", "https://vidtube.site/", vidtubeHeaders)
+                }
+                streamUrl.contains("nexabloom") ||
+                streamUrl.contains("imgnex") ||
+                streamUrl.contains("shiora") ||
+                streamUrl.contains("emeralddrift") ||
+                streamUrl.contains("megaplay") ||
+                streamUrl.contains("master.m3u8?token=") -> {
+                    Triple("$name - Fast Stream", "https://megaplay.buzz/", megaplayHeaders)
+                }
+                streamUrl.contains("winghoster") || streamUrl.contains("vhscdn") -> {
+                    Triple("$name - Vidplay", "https://play.vhscdn.to/", vhscdnHeaders)
+                }
+                else -> {
+                    Triple("$name - Stream", "$mainUrl/", defaultStreamHeaders)
+                }
+            }
+        }
+
         // 1. Direct stream check
         if (data.contains(".m3u8", ignoreCase = true)) {
+            val (sourceName, referer, headers) = getStreamMetadata(data)
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$sourceName [Auto]",
+                    url = data,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = referer
+                    this.headers = headers
+                    this.quality = Qualities.P1080.value
+                }
+            )
+            foundAny = true
             try {
-                M3u8Helper.generateM3u8(name, data, "$mainUrl/").forEach {
+                M3u8Helper.generateM3u8(
+                    source = sourceName,
+                    streamUrl = data,
+                    referer = referer,
+                    headers = headers
+                ).forEach {
                     callback.invoke(it)
-                    foundAny = true
                 }
             } catch (_: Throwable) {}
             return foundAny
@@ -394,109 +500,149 @@ class MiruroProvider : MainAPI() {
         // 3. Fetch watch page HTML
         val pageHtml = safeGetText(watchUrl) ?: return false
 
-        // 4. Extract all m3u8 streams embedded in watch page
+        val processedUrls = mutableSetOf<String>()
+
+        // 4a. Structured stream extraction directly from SvelteKit SSR server definitions
+        val serverRegex = Regex("""server:"([^"]+)"[^{}]*?(?:headers:\{([^}]+)\})?[^{}]*?streams:\[\{url:"([^"]+)"""")
+        serverRegex.findAll(pageHtml).forEach { match ->
+            val serverName = match.groupValues[1]
+            val rawHeaders = match.groupValues.getOrNull(2)
+            val streamUrl = match.groupValues[3].trim()
+            if (streamUrl.isNotBlank() &&
+                !streamUrl.contains("sprite") &&
+                !streamUrl.endsWith(".jpeg") &&
+                !streamUrl.endsWith(".png") &&
+                processedUrls.add(streamUrl)) {
+                val (sourceName, referer, headers) = getStreamMetadata(streamUrl, rawHeaders, serverName)
+
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = "$sourceName [Auto]",
+                        url = streamUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = referer
+                        this.headers = headers
+                        this.quality = Qualities.P1080.value
+                    }
+                )
+                foundAny = true
+
+                try {
+                    M3u8Helper.generateM3u8(
+                        source = sourceName,
+                        streamUrl = streamUrl,
+                        referer = referer,
+                        headers = headers
+                    ).forEach { link ->
+                        callback.invoke(link)
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+
+        // 4b. Regex fallback for any embedded .m3u8 streams not already matched
         val m3u8Regex = Regex("""https?://[^"'\s;,\\)]+\.m3u8[^"'\s;,\\)]*""")
-        val m3u8Urls = m3u8Regex.findAll(pageHtml).map { it.value }.toSet()
+        m3u8Regex.findAll(pageHtml).forEach { match ->
+            val streamUrl = match.value.trim()
+            if (!streamUrl.contains("sprite") &&
+                !streamUrl.contains(".jpeg") &&
+                !streamUrl.contains(".png") &&
+                !streamUrl.contains(".webp") &&
+                processedUrls.add(streamUrl)) {
+                val (sourceName, referer, headers) = getStreamMetadata(streamUrl)
 
-        val ultracloudHeaders = mapOf(
-            "Origin" to "https://ultracloud.cc",
-            "Referer" to "https://ultracloud.cc/",
-            "User-Agent" to USER_AGENT
-        )
-        val megaplayHeaders = mapOf(
-            "Origin" to "https://megaplay.buzz",
-            "Referer" to "https://megaplay.buzz/",
-            "User-Agent" to USER_AGENT
-        )
-        val defaultStreamHeaders = mapOf(
-            "User-Agent" to USER_AGENT,
-            "Referer" to "$mainUrl/"
-        )
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = "$sourceName [Auto]",
+                        url = streamUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = referer
+                        this.headers = headers
+                        this.quality = Qualities.P1080.value
+                    }
+                )
+                foundAny = true
 
-        for (streamUrl in m3u8Urls) {
-            val (sourceName, referer, headers) = when {
-                streamUrl.contains("willowblueice") ||
-                streamUrl.contains("riverpalm") ||
-                streamUrl.contains("windstartide") ||
-                streamUrl.contains("velvetvault") ||
-                streamUrl.contains("leafshoreriver") ||
-                streamUrl.contains("ultracloud") -> {
-                    Triple("$name - Ultra Stream", "https://ultracloud.cc/", ultracloudHeaders)
-                }
-                streamUrl.contains("nexabloom") ||
-                streamUrl.contains("imgnex") ||
-                streamUrl.contains("shiora") ||
-                streamUrl.contains("megaplay") -> {
-                    Triple("$name - Fast Stream", "https://megaplay.buzz/", megaplayHeaders)
-                }
-                streamUrl.contains("keeply") -> {
-                    Triple("$name - Keeply Stream", "$mainUrl/", defaultStreamHeaders)
-                }
-                else -> {
-                    Triple("$name - Stream", "$mainUrl/", defaultStreamHeaders)
-                }
+                try {
+                    M3u8Helper.generateM3u8(
+                        source = sourceName,
+                        streamUrl = streamUrl,
+                        referer = referer,
+                        headers = headers
+                    ).forEach { link ->
+                        callback.invoke(link)
+                    }
+                } catch (_: Throwable) {}
             }
-
-            // Always emit master Auto stream link for robust adaptive streaming
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = "$sourceName [Auto]",
-                    url = streamUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = referer
-                    this.headers = headers
-                    this.quality = Qualities.P1080.value
-                }
-            )
-            foundAny = true
-
-            // Also parse quality sub-streams via M3u8Helper
-            try {
-                M3u8Helper.generateM3u8(
-                    source = sourceName,
-                    streamUrl = streamUrl,
-                    referer = referer,
-                    headers = headers
-                ).forEach { link ->
-                    callback.invoke(link)
-                }
-            } catch (_: Throwable) {}
         }
 
-        // 5. Extract all subtitles from watch page
+        // 5a. Structured subtitles from SvelteKit SSR: {language:"en",label:"English",file:"https://...",format:"vtt"}
+        val processedSubs = mutableSetOf<String>()
+        val subBlockRegex = Regex("""subtitles:\[([^\]]+)\]""")
+        val subObjRegex = Regex("""\{language:"([^"]*)",label:"([^"]*)",file:"([^"]+)"""")
+        subBlockRegex.findAll(pageHtml).forEach { blockMatch ->
+            subObjRegex.findAll(blockMatch.groupValues[1]).forEach { subMatch ->
+                val label = subMatch.groupValues[2].ifBlank { subMatch.groupValues[1] }.ifBlank { "English" }
+                val subUrl = subMatch.groupValues[3].trim()
+                if (subUrl.isNotBlank() && processedSubs.add(subUrl)) {
+                    val subHeaders = when {
+                        subUrl.contains("coastowl") || subUrl.contains("keeply") || subUrl.contains("crystal-") ||
+                        subUrl.contains("northmaple") || subUrl.contains("sailorbit") || subUrl.contains("ultracloud") ||
+                        subUrl.contains("/a/") || subUrl.contains("/m/") -> ultracloudHeaders
+                        subUrl.contains("mysubsplay") || subUrl.contains("crystaldrift") || subUrl.contains("megaplay") -> megaplayHeaders
+                        else -> defaultStreamHeaders
+                    }
+                    subtitleCallback.invoke(
+                        newSubtitleFile(lang = label, url = subUrl) {
+                            this.headers = subHeaders
+                        }
+                    )
+                }
+            }
+        }
+
+        // 5b. Regex for any additional .vtt subtitle URLs
         val vttRegex = Regex("""https?://[^"'\s;,\\)]+\.vtt[^"'\s;,\\)]*""")
-        val vttUrls = vttRegex.findAll(pageHtml)
-            .map { it.value }
-            .filterNot { it.contains("preview", ignoreCase = true) || it.contains("thumbnail", ignoreCase = true) }
-            .toSet()
-
-        for (vttUrl in vttUrls) {
-            val lang = when {
-                vttUrl.contains("eng", ignoreCase = true) -> "English"
-                vttUrl.contains("spa", ignoreCase = true) -> "Spanish"
-                vttUrl.contains("fre", ignoreCase = true) -> "French"
-                vttUrl.contains("ger", ignoreCase = true) -> "German"
-                vttUrl.contains("rus", ignoreCase = true) -> "Russian"
-                vttUrl.contains("por", ignoreCase = true) -> "Portuguese"
-                vttUrl.contains("ita", ignoreCase = true) -> "Italian"
-                vttUrl.contains("pol", ignoreCase = true) -> "Polish"
-                vttUrl.contains("ara", ignoreCase = true) -> "Arabic"
-                vttUrl.contains("tha", ignoreCase = true) -> "Thai"
-                vttUrl.contains("vie", ignoreCase = true) -> "Vietnamese"
-                vttUrl.contains("ind", ignoreCase = true) -> "Indonesian"
-                vttUrl.contains("jpn", ignoreCase = true) -> "Japanese"
-                vttUrl.contains("hin", ignoreCase = true) -> "Hindi"
-                else -> "Subtitle"
-            }
-            val subHeaders = if (vttUrl.contains("mysubsplay")) megaplayHeaders else defaultStreamHeaders
-            subtitleCallback.invoke(
-                newSubtitleFile(lang = lang, url = vttUrl) {
-                    this.headers = subHeaders
+        vttRegex.findAll(pageHtml)
+            .map { it.value.trim() }
+            .filterNot { it.contains("preview", ignoreCase = true) || it.contains("thumbnail", ignoreCase = true) || it.contains("sprite", ignoreCase = true) }
+            .forEach { vttUrl ->
+                if (processedSubs.add(vttUrl)) {
+                    val lang = when {
+                        vttUrl.contains("eng", ignoreCase = true) -> "English"
+                        vttUrl.contains("spa", ignoreCase = true) -> "Spanish"
+                        vttUrl.contains("fre", ignoreCase = true) -> "French"
+                        vttUrl.contains("ger", ignoreCase = true) -> "German"
+                        vttUrl.contains("rus", ignoreCase = true) -> "Russian"
+                        vttUrl.contains("por", ignoreCase = true) -> "Portuguese"
+                        vttUrl.contains("ita", ignoreCase = true) -> "Italian"
+                        vttUrl.contains("pol", ignoreCase = true) -> "Polish"
+                        vttUrl.contains("ara", ignoreCase = true) -> "Arabic"
+                        vttUrl.contains("tha", ignoreCase = true) -> "Thai"
+                        vttUrl.contains("vie", ignoreCase = true) -> "Vietnamese"
+                        vttUrl.contains("ind", ignoreCase = true) -> "Indonesian"
+                        vttUrl.contains("jpn", ignoreCase = true) -> "Japanese"
+                        vttUrl.contains("hin", ignoreCase = true) -> "Hindi"
+                        else -> "Subtitle"
+                    }
+                    val subHeaders = when {
+                        vttUrl.contains("coastowl") || vttUrl.contains("keeply") || vttUrl.contains("crystal-") ||
+                        vttUrl.contains("northmaple") || vttUrl.contains("sailorbit") || vttUrl.contains("ultracloud") ||
+                        vttUrl.contains("/a/") || vttUrl.contains("/m/") -> ultracloudHeaders
+                        vttUrl.contains("mysubsplay") || vttUrl.contains("crystaldrift") || vttUrl.contains("megaplay") -> megaplayHeaders
+                        else -> defaultStreamHeaders
+                    }
+                    subtitleCallback.invoke(
+                        newSubtitleFile(lang = lang, url = vttUrl) {
+                            this.headers = subHeaders
+                        }
+                    )
                 }
-            )
-        }
+            }
 
         // 6. Fallback: inspect any embedded iframes
         val doc = Jsoup.parse(pageHtml, watchUrl)
