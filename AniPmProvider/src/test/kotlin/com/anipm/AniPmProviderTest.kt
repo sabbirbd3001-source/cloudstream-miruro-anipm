@@ -108,6 +108,14 @@ class AniPmProviderTest {
             this.headers = mapOf("Origin" to "https://example.com")
         }
         assertEquals("https://example.com", link.headers["Origin"])
+
+        val sub = com.lagradost.cloudstream3.newSubtitleFile(
+            lang = "English",
+            url = "https://media.settlar.io/sub.vtt"
+        ) {
+            this.headers = mapOf("Origin" to "https://embed.settlar.io")
+        }
+        assertEquals("https://embed.settlar.io", sub.headers?.get("Origin"))
     }
 
     @Test

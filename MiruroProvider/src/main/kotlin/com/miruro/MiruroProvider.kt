@@ -173,14 +173,6 @@ class MiruroProvider : MainAPI() {
     private val webViewResolver by lazy {
         WebViewResolver(
             interceptUrl = Regex("""https?://(?:www\.)?miruro\.(?:cx|to|tv|bz).*"""),
-            additionalUrls = listOf(
-                Regex(""".*challenges\.cloudflare\.com/.*"""),
-                Regex(""".*keeply\.top/.*"""),
-                Regex(""".*strm\.cx/.*"""),
-                Regex(""".*quavex\.top/.*"""),
-                Regex(""".*ultracloud\.cc/.*"""),
-                Regex(""".*megaplay\.buzz/.*""")
-            ),
             userAgent = USER_AGENT
         )
     }
@@ -189,11 +181,40 @@ class MiruroProvider : MainAPI() {
         "User-Agent" to USER_AGENT,
         "Referer" to "$mainUrl/",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language" to "en-US,en;q=0.9",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "same-origin"
+        "Accept-Language" to "en-US,en;q=0.9"
     )
+
+    private suspend fun safeGetDoc(url: String, headers: Map<String, String> = defaultHeaders): Document? {
+        val direct = try {
+            app.get(url, headers = headers).document
+        } catch (_: Throwable) {
+            null
+        }
+        if (direct != null && direct.selectFirst("body") != null && !direct.title().contains("Just a moment", ignoreCase = true)) {
+            return direct
+        }
+        return try {
+            app.get(url, headers = headers, interceptor = webViewResolver).document
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private suspend fun safeGetText(url: String, headers: Map<String, String> = defaultHeaders): String? {
+        val direct = try {
+            app.get(url, headers = headers).text
+        } catch (_: Throwable) {
+            null
+        }
+        if (direct != null && !direct.contains("Just a moment") && !direct.contains("cf-browser-verification")) {
+            return direct
+        }
+        return try {
+            app.get(url, headers = headers, interceptor = webViewResolver).text
+        } catch (_: Throwable) {
+            null
+        }
+    }
 
     override val mainPage = mainPageOf(
         "$mainUrl/trending" to "Trending Anime",
@@ -203,12 +224,7 @@ class MiruroProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val doc = try {
-            app.get(request.data, headers = defaultHeaders, interceptor = webViewResolver).document
-        } catch (_: Throwable) {
-            return null
-        }
-
+        val doc = safeGetDoc(request.data) ?: return null
         val items = parseHtmlCards(doc)
         return newHomePageResponse(
             listOf(HomePageList(request.name, items, isHorizontalImages = false)),
@@ -221,30 +237,29 @@ class MiruroProvider : MainAPI() {
 
         val encoded = java.net.URLEncoder.encode(query.trim(), "UTF-8")
         val searchUrl = "$mainUrl/search?q=$encoded"
-        val doc = try {
-            app.get(searchUrl, headers = defaultHeaders, interceptor = webViewResolver).document
-        } catch (_: Throwable) {
-            return emptyList()
-        }
+        val doc = safeGetDoc(searchUrl) ?: return emptyList()
 
         return parseHtmlCards(doc)
     }
 
     override suspend fun load(url: String): LoadResponse? {
         val animeId = extractAnimeId(url) ?: return null
-        val watchUrl = "$mainUrl/watch/$animeId"
 
-        val doc = try {
-            app.get(watchUrl, headers = defaultHeaders, interceptor = webViewResolver).document
-        } catch (_: Throwable) {
-            try {
-                app.get(url, headers = defaultHeaders, interceptor = webViewResolver).document
-            } catch (_: Throwable) {
-                return null
-            }
+        // Build canonical watch URL preserving slug if present to prevent 301 redirect chains
+        val targetWatchUrl = if (url.contains("/info/")) {
+            url.replace("/info/", "/watch/").let { if (!it.contains("?ep=")) "$it?ep=1" else it }
+        } else if (url.contains("/watch/")) {
+            if (!url.contains("?ep=")) "$url?ep=1" else url
+        } else {
+            "$mainUrl/watch/$animeId?ep=1"
         }
 
+        val doc = safeGetDoc(targetWatchUrl) ?: safeGetDoc(url) ?: return null
+
         val rawTitle = doc.selectFirst("meta[property='og:title']")?.attr("content")
+            ?: doc.selectFirst("script[type='application/ld+json']")?.data()?.let { ld ->
+                Regex(""""name"\s*:\s*"([^"]+)"""").find(ld)?.groupValues?.get(1)
+            }
             ?: doc.selectFirst("h1")?.text()
             ?: url.split("/").lastOrNull()?.replace("-", " ")
             ?: "Anime"
@@ -265,30 +280,50 @@ class MiruroProvider : MainAPI() {
         val html = doc.html()
         val episodes = mutableListOf<Episode>()
 
-        // 1. Extract episode items from embedded SvelteKit page data
-        val epPattern = Regex("""\{id:"([^"]*)",number:(\d+),title:"([^"]*)",image:"([^"]*)"""")
-        val epMatches = epPattern.findAll(html).toList()
+        val inlinedRegex = Regex("""\{id:"([^"]*)",number:(\d+),title:"([^"]*)",(?:image:(?:"([^"]*)"|null|void 0)|[^}]*)""")
+        val assignRegex = Regex("""\b([a-zA-Z0-9_$]+)\.id="([^"]*)";\1\.number=(\d+);\1\.title="([^"]*)";(?:\1\.image="([^"]*)")?""")
 
-        if (epMatches.isNotEmpty()) {
-            epMatches.forEach { match ->
-                val epNum = match.groupValues[2].toIntOrNull() ?: 1
-                val epTitle = match.groupValues[3].ifBlank { "Episode $epNum" }
-                val epThumb = match.groupValues[4].takeIf { it.isNotBlank() }
-
-                val payload = MiruroPlayPayload(animeId = animeId, episodeId = epNum.toString())
-                val dataJson = mapper.writeValueAsString(payload)
-
-                episodes.add(
-                    newEpisode(dataJson) {
-                        this.name = epTitle
-                        this.episode = epNum
-                        this.posterUrl = epThumb
-                    }
-                )
+        // 1. Matches assignments like a.id="1";a.number=1;a.title="...";a.image="...";
+        assignRegex.findAll(html).forEach { match ->
+            val epNum = match.groupValues[3].toIntOrNull() ?: return@forEach
+            val epTitle = match.groupValues[4].ifBlank { "Episode $epNum" }
+            val epThumb = match.groupValues.getOrNull(5)?.takeIf { it.isNotBlank() }
+            val epWatchUrl = if (targetWatchUrl.contains("?")) {
+                targetWatchUrl.replace(Regex("""\?ep=\d+"""), "?ep=$epNum")
+            } else {
+                "$targetWatchUrl?ep=$epNum"
             }
+            val payload = MiruroPlayPayload(animeId = animeId, episodeId = epNum.toString(), watchUrl = epWatchUrl)
+            episodes.add(
+                newEpisode(mapper.writeValueAsString(payload)) {
+                    this.name = epTitle
+                    this.episode = epNum
+                    this.posterUrl = epThumb
+                }
+            )
         }
 
-        // 2. Fallback to episode_counts or single episode if no regex matches
+        // 2. Matches inlined objects like {id:"3",number:3,title:"...",image:"..."}
+        inlinedRegex.findAll(html).forEach { match ->
+            val epNum = match.groupValues[2].toIntOrNull() ?: return@forEach
+            val epTitle = match.groupValues[3].ifBlank { "Episode $epNum" }
+            val epThumb = match.groupValues.getOrNull(4)?.takeIf { it.isNotBlank() }
+            val epWatchUrl = if (targetWatchUrl.contains("?")) {
+                targetWatchUrl.replace(Regex("""\?ep=\d+"""), "?ep=$epNum")
+            } else {
+                "$targetWatchUrl?ep=$epNum"
+            }
+            val payload = MiruroPlayPayload(animeId = animeId, episodeId = epNum.toString(), watchUrl = epWatchUrl)
+            episodes.add(
+                newEpisode(mapper.writeValueAsString(payload)) {
+                    this.name = epTitle
+                    this.episode = epNum
+                    this.posterUrl = epThumb
+                }
+            )
+        }
+
+        // 3. Fallback to episode_counts or single episode if no regex matches
         if (episodes.isEmpty()) {
             val countPattern = Regex("""episode_counts:\{[^}]*?(?:raw|sub):(\d+)""")
             val totalEps = countPattern.find(html)?.groupValues?.get(1)?.toIntOrNull()
@@ -296,7 +331,12 @@ class MiruroProvider : MainAPI() {
                 ?: 1
 
             for (i in 1..totalEps) {
-                val payload = MiruroPlayPayload(animeId = animeId, episodeId = i.toString())
+                val epWatchUrl = if (targetWatchUrl.contains("?")) {
+                    targetWatchUrl.replace(Regex("""\?ep=\d+"""), "?ep=$i")
+                } else {
+                    "$targetWatchUrl?ep=$i"
+                }
+                val payload = MiruroPlayPayload(animeId = animeId, episodeId = i.toString(), watchUrl = epWatchUrl)
                 episodes.add(
                     newEpisode(mapper.writeValueAsString(payload)) {
                         this.name = "Episode $i"
@@ -306,11 +346,13 @@ class MiruroProvider : MainAPI() {
             }
         }
 
+        val sortedEpisodes = episodes.distinctBy { it.episode }.sortedBy { it.episode }
+
         return newAnimeLoadResponse(cleanTitle, url, TvType.Anime) {
             this.posterUrl = poster
             this.backgroundPosterUrl = banner
             this.plot = plot
-            addEpisodes(DubStatus.Subbed, episodes.distinctBy { it.episode })
+            addEpisodes(DubStatus.Subbed, sortedEpisodes)
         }
     }
 
@@ -338,7 +380,7 @@ class MiruroProvider : MainAPI() {
             val payload = try {
                 mapper.readValue<MiruroPlayPayload>(data)
             } catch (_: Throwable) { null }
-            if (payload != null) {
+            payload?.watchUrl ?: if (payload != null) {
                 "$mainUrl/watch/${payload.animeId}?ep=${payload.episodeId}"
             } else {
                 fixUrl(data)
@@ -350,11 +392,7 @@ class MiruroProvider : MainAPI() {
         }
 
         // 3. Fetch watch page HTML
-        val pageHtml = try {
-            app.get(watchUrl, headers = defaultHeaders, interceptor = webViewResolver).text
-        } catch (_: Throwable) {
-            return false
-        }
+        val pageHtml = safeGetText(watchUrl) ?: return false
 
         // 4. Extract all m3u8 streams embedded in watch page
         val m3u8Regex = Regex("""https?://[^"'\s;,\\)]+\.m3u8[^"'\s;,\\)]*""")
@@ -399,6 +437,22 @@ class MiruroProvider : MainAPI() {
                 }
             }
 
+            // Always emit master Auto stream link for robust adaptive streaming
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$sourceName [Auto]",
+                    url = streamUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = referer
+                    this.headers = headers
+                    this.quality = Qualities.P1080.value
+                }
+            )
+            foundAny = true
+
+            // Also parse quality sub-streams via M3u8Helper
             try {
                 M3u8Helper.generateM3u8(
                     source = sourceName,
@@ -407,23 +461,8 @@ class MiruroProvider : MainAPI() {
                     headers = headers
                 ).forEach { link ->
                     callback.invoke(link)
-                    foundAny = true
                 }
-            } catch (_: Throwable) {
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = sourceName,
-                        url = streamUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = referer
-                        this.headers = headers
-                        this.quality = Qualities.P1080.value
-                    }
-                )
-                foundAny = true
-            }
+            } catch (_: Throwable) {}
         }
 
         // 5. Extract all subtitles from watch page
@@ -451,8 +490,11 @@ class MiruroProvider : MainAPI() {
                 vttUrl.contains("hin", ignoreCase = true) -> "Hindi"
                 else -> "Subtitle"
             }
+            val subHeaders = if (vttUrl.contains("mysubsplay")) megaplayHeaders else defaultStreamHeaders
             subtitleCallback.invoke(
-                newSubtitleFile(lang = lang, url = vttUrl)
+                newSubtitleFile(lang = lang, url = vttUrl) {
+                    this.headers = subHeaders
+                }
             )
         }
 
@@ -569,7 +611,8 @@ data class MiruroEpisodeItem(
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class MiruroPlayPayload(
     val animeId: String,
-    val episodeId: String
+    val episodeId: String,
+    val watchUrl: String? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

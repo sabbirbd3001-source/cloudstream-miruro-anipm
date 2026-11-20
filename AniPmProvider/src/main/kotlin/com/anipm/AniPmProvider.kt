@@ -90,11 +90,6 @@ class AniPmProvider : MainAPI() {
     private val webViewResolver by lazy {
         WebViewResolver(
             interceptUrl = Regex("""https?://(?:(?:www\.)?ani\.pm|.*settlar\.io).*"""),
-            additionalUrls = listOf(
-                Regex(""".*challenges\.cloudflare\.com/.*"""),
-                Regex(""".*settlar\.io/.*"""),
-                Regex(""".*media\.settlar\.io/.*""")
-            ),
             userAgent = USER_AGENT
         )
     }
@@ -105,6 +100,22 @@ class AniPmProvider : MainAPI() {
         "Accept" to "application/json, text/plain, */*",
         "Accept-Language" to "en-US,en;q=0.9"
     )
+
+    private suspend fun safeGet(url: String, headers: Map<String, String> = defaultHeaders): com.lagradost.nicehttp.NiceResponse? {
+        val direct = try {
+            app.get(url, headers = headers)
+        } catch (_: Throwable) {
+            null
+        }
+        if (direct != null && direct.code == 200) {
+            return direct
+        }
+        return try {
+            app.get(url, headers = headers, interceptor = webViewResolver)
+        } catch (_: Throwable) {
+            null
+        }
+    }
 
     override val mainPage = mainPageOf(
         "spotlight" to "Spotlight",
@@ -117,13 +128,7 @@ class AniPmProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val feedUrl = "$mainUrl/api/anime/home-feed?content=3"
-        val resp = try {
-            app.get(feedUrl, headers = defaultHeaders, interceptor = webViewResolver)
-        } catch (_: Throwable) {
-            return null
-        }
-
-        if (resp.code != 200) return null
+        val resp = safeGet(feedUrl, defaultHeaders) ?: return null
 
         val homeFeed = try {
             mapper.readValue<AniPmHomeFeedResponse>(resp.text)
@@ -177,13 +182,7 @@ class AniPmProvider : MainAPI() {
         if (query.isBlank()) return emptyList()
 
         val searchUrl = "$mainUrl/api/anime/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
-        val resp = try {
-            app.get(searchUrl, headers = defaultHeaders, interceptor = webViewResolver)
-        } catch (_: Throwable) {
-            return emptyList()
-        }
-
-        if (resp.code != 200) return emptyList()
+        val resp = safeGet(searchUrl, defaultHeaders) ?: return emptyList()
 
         val searchResult = try {
             mapper.readValue<AniPmSearchResponse>(resp.text)
@@ -230,11 +229,7 @@ class AniPmProvider : MainAPI() {
             "$mainUrl/api/anime/series/$idParam"
         }
 
-        val resp = try {
-            app.get(apiUrl, headers = defaultHeaders, interceptor = webViewResolver)
-        } catch (_: Throwable) {
-            return null
-        }
+        val resp = safeGet(apiUrl, defaultHeaders) ?: return null
 
         if (resp.code != 200) return null
 
@@ -358,7 +353,7 @@ class AniPmProvider : MainAPI() {
             try {
                 // Step 1: Get playback bootstrap to obtain settlarSelection
                 val bootUrl = "$mainUrl/api/anime/playback-bootstrap/${payload.source}/${payload.id}?ep=${payload.ep}&lang=$channel"
-                val bootResp = app.get(bootUrl, headers = defaultHeaders, interceptor = webViewResolver)
+                val bootResp = safeGet(bootUrl, defaultHeaders) ?: continue
                 if (bootResp.code != 200) continue
 
                 val bootData = mapper.readValue<AniPmBootstrapResponse>(bootResp.text)
@@ -368,15 +363,14 @@ class AniPmProvider : MainAPI() {
                 // Step 2: Create Settlar session to get embedUrl with token
                 val encSelection = java.net.URLEncoder.encode(selection, "UTF-8")
                 val sessUrl = "$mainUrl/api/anime/settlar/session?selection=$encSelection&provider=anipm&ep=${payload.ep}&channel=$channel&telemetry=0"
-                val sessResp = app.get(
+                val sessResp = safeGet(
                     sessUrl,
-                    headers = mapOf(
+                    mapOf(
                         "User-Agent" to USER_AGENT,
                         "Referer" to "$mainUrl/",
                         "Accept" to "application/json"
-                    ),
-                    interceptor = webViewResolver
-                )
+                    )
+                ) ?: continue
                 if (sessResp.code != 200) continue
 
                 val sessData = mapper.readValue<AniPmSettlarSessionResponse>(sessResp.text)
@@ -396,11 +390,11 @@ class AniPmProvider : MainAPI() {
                     "Sec-Fetch-Site" to "same-origin",
                     "Accept" to "application/json"
                 )
-                val streamResp = app.get(
-                    streamApiUrl,
-                    headers = settlarApiHeaders,
-                    interceptor = webViewResolver
-                )
+                val streamResp = try {
+                    app.get(streamApiUrl, headers = settlarApiHeaders)
+                } catch (_: Throwable) {
+                    continue
+                }
 
                 if (streamResp.code != 200) continue
 
@@ -415,36 +409,38 @@ class AniPmProvider : MainAPI() {
                         "Origin" to "https://embed.settlar.io",
                         "Sec-Fetch-Dest" to "empty",
                         "Sec-Fetch-Mode" to "cors",
-                        "Sec-Fetch-Site" to "same-site"
+                        "Sec-Fetch-Site" to "same-site",
+                        "Accept" to "*/*"
                     )
 
+                    // Master playlist link: provides adaptive streaming & robust native ExoPlayer playback
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = "$name - $channelLabel [Auto]",
+                            url = hlsSource,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = "https://embed.settlar.io/"
+                            this.headers = mediaHeaders
+                            this.quality = Qualities.P1080.value
+                        }
+                    )
+                    foundAny = true
+
+                    // Also parse specific quality sub-streams (1080p, 720p, etc.)
                     try {
                         M3u8Helper.generateM3u8(
-                            source = "$name - $channelLabel [HLS]",
+                            source = "$name - $channelLabel",
                             streamUrl = hlsSource,
                             referer = "https://embed.settlar.io/",
                             headers = mediaHeaders
                         ).forEach {
                             callback.invoke(it)
-                            foundAny = true
                         }
-                    } catch (_: Throwable) {
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name - $channelLabel [Auto]",
-                                url = hlsSource,
-                                type = ExtractorLinkType.M3U8
-                            ) {
-                                this.referer = "https://embed.settlar.io/"
-                                this.headers = mediaHeaders
-                                this.quality = Qualities.P1080.value
-                            }
-                        )
-                        foundAny = true
-                    }
+                    } catch (_: Throwable) {}
 
-                    // Extract subtitles
+                    // Extract subtitles with required Settlar media headers
                     streamData.subtitles.orEmpty().forEach { sub ->
                         val subUrl = sub.url
                         if (!subUrl.isNullOrBlank()) {
@@ -453,7 +449,9 @@ class AniPmProvider : MainAPI() {
                                 newSubtitleFile(
                                     lang = label,
                                     url = subUrl
-                                )
+                                ) {
+                                    this.headers = mediaHeaders
+                                }
                             )
                         }
 
@@ -464,7 +462,9 @@ class AniPmProvider : MainAPI() {
                                 newSubtitleFile(
                                     lang = label,
                                     url = assUrl
-                                )
+                                ) {
+                                    this.headers = mediaHeaders
+                                }
                             )
                         }
                     }

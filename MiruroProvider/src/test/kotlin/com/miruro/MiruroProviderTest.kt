@@ -232,4 +232,57 @@ class MiruroProviderTest {
         assertEquals(1, scripts.size)
         assertTrue(scripts[0].data().contains("One Piece"))
     }
+
+    @Test
+    fun testSvelteKitEpisodeExtraction() {
+        val sampleHtml = """
+            <script>
+            a.id="1";a.number=1;a.title="Locusts";a.image="https://image.tmdb.org/poster1.jpg";
+            b.id="2";b.number=2;b.title="The Fire-Rat Cloak";b.image="https://image.tmdb.org/poster2.jpg";
+            return [{episodes:[a,b,{id:"3",number:3,title:"Let Them Eat Cake",image:"https://image.tmdb.org/poster3.jpg",airDate:"2026-10-16"}]}]
+            </script>
+        """.trimIndent()
+
+        val inlinedRegex = Regex("""\{id:"([^"]*)",number:(\d+),title:"([^"]*)",(?:image:(?:"([^"]*)"|null|void 0)|[^}]*)""")
+        val assignRegex = Regex("""\b([a-zA-Z0-9_$]+)\.id="([^"]*)";\1\.number=(\d+);\1\.title="([^"]*)";(?:\1\.image="([^"]*)")?""")
+
+        val episodes = mutableMapOf<Int, String>()
+        assignRegex.findAll(sampleHtml).forEach {
+            episodes[it.groupValues[3].toInt()] = it.groupValues[4]
+        }
+        inlinedRegex.findAll(sampleHtml).forEach {
+            episodes[it.groupValues[2].toInt()] = it.groupValues[3]
+        }
+
+        assertEquals(3, episodes.size)
+        assertEquals("Locusts", episodes[1])
+        assertEquals("The Fire-Rat Cloak", episodes[2])
+        assertEquals("Let Them Eat Cake", episodes[3])
+    }
+
+    @Test
+    fun testMiruroPlayPayloadWithWatchUrl() {
+        val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+        val payload = MiruroPlayPayload(
+            animeId = "test-123",
+            episodeId = "1",
+            watchUrl = "https://miruro.cx/watch/test-123/my-anime?ep=1"
+        )
+        val json = mapper.writeValueAsString(payload)
+        val deserialized = mapper.readValue(json, MiruroPlayPayload::class.java)
+        assertEquals("test-123", deserialized.animeId)
+        assertEquals("1", deserialized.episodeId)
+        assertEquals("https://miruro.cx/watch/test-123/my-anime?ep=1", deserialized.watchUrl)
+    }
+
+    @Test
+    fun testSubtitleFileHeaders() = kotlinx.coroutines.runBlocking {
+        val sub = com.lagradost.cloudstream3.newSubtitleFile(
+            lang = "English",
+            url = "https://mysubsplay.com/sub.vtt"
+        ) {
+            this.headers = mapOf("Origin" to "https://megaplay.buzz")
+        }
+        assertEquals("https://megaplay.buzz", sub.headers?.get("Origin"))
+    }
 }
