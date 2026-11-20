@@ -1,7 +1,8 @@
 # 🎬 Miruro & Ani.pm — Cloudstream Provider Repository
 
-[![Build and Publish Cloudstream Plugins](https://github.com/sabbirbd3001-source/cloudstream-miruro-anipm/actions/workflows/build.yml/badge.svg)](https://github.com/sabbirbd3001-source/cloudstream-miruro-anipm/actions/workflows/build.yml)
+[![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)](#)
 [![Cloudstream v3](https://img.shields.io/badge/Cloudstream-v3%20Compatible-blue.svg)](https://github.com/recloudstream/cloudstream)
+[![Plugins](https://img.shields.io/badge/plugins-Ani.pm%20%7C%20Miruro-orange.svg)](#)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.4.0-purple.svg)](https://kotlinlang.org)
 [![License](https://img.shields.io/badge/License-GPLv3-green.svg)](LICENSE)
 
@@ -39,21 +40,23 @@
 
 #### পদ্ধতি ১: ১-ক্লিক ইনস্টল (One-Click Install)
 আপনার অ্যান্ড্রয়েড ফোনে নিচের লিংকে ক্লিক করুন:
-👉 **[Add to Cloudstream (১-ক্লিক ইনস্টল)](cloudstreamrepo://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/plugins.json)**
+👉 **[Add to Cloudstream (১-ক্লিক ইনস্টল)](cloudstreamrepo://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/repo.json)**
+
+> 💡 **নোট:** ক্লাউডস্ট্রিমে রিপোজিটরি যুক্ত করার প্রধান এন্ট্রি পয়েন্ট হচ্ছে `repo.json`। এটি যুক্ত করলে অ্যাপ স্বয়ংক্রিয়ভাবে প্লাগইন তালিকা (`plugins.json`) পড়ে `Ani.pm` ও `Miruro` প্লাগইন দুটি দেখাবে।
 
 #### পদ্ধতি ২: ম্যানুয়াল ইনস্টলেশন (Manual Setup)
 1. **Cloudstream অ্যাপটি ওপেন করুন**।
 2. নিচের ডানে **Settings (গিয়ার আইকন)** এ যান।
 3. **Extensions** ট্যাবে ট্যাপ করুন।
-4. **Add Repository** বাটনে চাপ দিন।
+4. **Repositories** অপশনে ট্যাপ করে **Add Repository** বাটনে চাপ দিন।
 5. নিচের তথ্যগুলো দিন:
-   - **Repository Name**: `Miruro & Ani.pm Repository`
+   - **Repository Name**: `Miruro & Ani.pm Anime Repository`
    - **Repository URL**:
      ```text
-     https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/plugins.json
+     https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/repo.json
      ```
 6. **Download / Save** দিন।
-7. এখন Extensions লিস্টে গিয়ে **Ani.pm** ও **Miruro** প্লাগইন দুটি **Install** বাটনে ক্লিক করে ইনস্টল করুন!
+7. এখন Extensions লিস্টে গিয়ে **Ani.pm** ও **Miruro** প্লাগইন দুটির পাশে থাকা **Install / Download** বাটনে ক্লিক করে ইনস্টল করুন!
 
 ---
 
@@ -63,32 +66,54 @@ An extension repository for **Cloudstream 3** providing providers for two anime 
 - **Miruro** (`https://www.miruro.cx/`)
 - **Ani.pm** (`https://ani.pm/`)
 
+### 📲 How to Install in Cloudstream (Android)
+
+#### Method 1: 1-Click Installation
+Click the following link on your Android device:
+👉 **[Add to Cloudstream (1-Click Install)](cloudstreamrepo://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/repo.json)**
+
+#### Method 2: Manual Setup
+1. Open **Cloudstream 3** on Android.
+2. Go to **Settings (Gear icon) -> Extensions**.
+3. Select **Repositories -> Add Repository**.
+4. Enter the details:
+   - **Repository Name:** `Miruro & Ani.pm Anime Repository`
+   - **Repository URL:**
+     ```text
+     https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/repo.json
+     ```
+5. Tap **Download / Save**.
+6. In your **Extensions** tab, find **Ani.pm** and **Miruro** and tap **Install**!
+
+> 💡 **Note:** `repo.json` is the standard Cloudstream repository manifest. It references the compiled plugin catalog at `https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/plugins.json`.
+
+---
+
 ### 📦 Repository Structure
 
 ```text
 cloudstream-miruro-anipm/
-├── .github/
-│   └── workflows/
-│       └── build.yml              # Automated CI/CD workflow for GitHub Actions
-├── MiruroProvider/                # Miruro (miruro.cx) provider module
+├── ci/
+│   └── build.yml              # CI/CD workflow template for GitHub Actions
+├── MiruroProvider/            # Miruro (miruro.cx) provider module
 │   ├── src/main/kotlin/com/miruro/
-│   │   ├── MiruroPlugin.kt        # CloudstreamPlugin registration
-│   │   └── MiruroProvider.kt      # MainAPI implementation (API, Keeply Proxy, XOR/Gzip)
-│   ├── src/main/res/drawable/     # Plugin icon
+│   │   ├── MiruroPlugin.kt    # CloudstreamPlugin registration
+│   │   └── MiruroProvider.kt  # MainAPI implementation (API, Keeply Proxy, XOR/Gzip)
+│   ├── src/main/res/drawable/ # Plugin icon
 │   ├── src/test/kotlin/com/miruro/# Comprehensive unit tests
-│   └── build.gradle.kts           # Module build configuration
-├── AniPmProvider/                 # Ani.pm (ani.pm) provider module
+│   └── build.gradle.kts       # Module build configuration
+├── AniPmProvider/             # Ani.pm (ani.pm) provider module
 │   ├── src/main/kotlin/com/anipm/
-│   │   ├── AniPmPlugin.kt         # CloudstreamPlugin registration
-│   │   └── AniPmProvider.kt       # MainAPI implementation (Home feed, Settlar & Embed HLS)
-│   ├── src/main/res/drawable/     # Plugin icon
+│   │   ├── AniPmPlugin.kt     # CloudstreamPlugin registration
+│   │   └── AniPmProvider.kt   # MainAPI implementation (Home feed, Settlar & Embed HLS)
+│   ├── src/main/res/drawable/ # Plugin icon
 │   ├── src/test/kotlin/com/anipm/ # Unit tests for data models & parsing
-│   └── build.gradle.kts           # Module build configuration
-├── build.gradle.kts               # Root Gradle project configuration
-├── settings.gradle.kts            # Multi-module settings
-├── repo.json                      # Cloudstream repository descriptor
-├── plugins.json                   # Generated plugin index for Cloudstream app
-└── README.md                      # Documentation
+│   └── build.gradle.kts       # Module build configuration
+├── build.gradle.kts           # Root Gradle project configuration
+├── settings.gradle.kts        # Multi-module settings
+├── repo.json                  # Cloudstream repository descriptor
+├── plugins.json               # Generated plugin index for Cloudstream app
+└── README.md                  # Documentation
 ```
 
 ---
@@ -120,27 +145,12 @@ The compiled output will be generated in:
 
 ---
 
-### 🚀 GitHub Actions Setup (Publish to GitHub)
+### 🚀 CI / Deployment Setup
 
-1. Create a new GitHub repository: e.g. `cloudstream-miruro-anipm`.
-2. Push this project to the `main` branch:
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit of Miruro and Ani.pm Cloudstream repository"
-   git branch -M main
-   git remote add origin https://github.com/sabbirbd3001-source/cloudstream-miruro-anipm.git
-   git push -u origin main
-   ```
-3. GitHub Actions will automatically run `.github/workflows/build.yml`:
-   - It compiles both plugins.
-   - It generates `.cs3` and `.jar` packages.
-   - It writes `plugins.json` with file hashes and sizes.
-   - It publishes everything to the `builds` orphan branch automatically.
-4. Your Cloudstream repository URL will be ready at:
-   ```text
-   https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/plugins.json
-   ```
+1. The compiled release packages are deployed on the `builds` orphan branch:
+   - `https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/repo.json`
+   - `https://raw.githubusercontent.com/sabbirbd3001-source/cloudstream-miruro-anipm/builds/plugins.json`
+2. If you wish to set up automatic CI/CD on push via GitHub Actions, copy `ci/build.yml` to `.github/workflows/build.yml` using a GitHub Personal Access Token or repository push that includes `workflow` permission.
 
 ---
 
